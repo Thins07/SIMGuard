@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard - Sri Lankan SIM Swap Detection Dashboard</title>
+    <link rel="stylesheet" href="sl-ml-dashboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Header Navigation -->
+    <header class="header">
+        <nav class="navbar">
+            <div class="nav-brand">
+                <i class="fas fa-shield-alt"></i>
+                <span>SIMGuard</span>
+                <span class="badge-sl">🇱🇰 Sri Lanka</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="../csv-upload/index.html" class="nav-link">CSV Dashboard</a></li>
+                <li><a href="../ml-dashboard/ml-dashboard.html" class="nav-link">ML Dashboard</a></li>
+                <li><a href="sl-ml-dashboard.html" class="nav-link active">🇱🇰 SL ML Dashboard</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <h1><i class="fas fa-brain"></i> Sri Lankan SIM Swap Detection - ML Dashboard</h1>
+            <p>Upload Sri Lankan datasets (CSV/Excel), train ML models, and detect SIM swap attacks in real-time</p>
+        </div>
+
+        <!-- Two Column Layout -->
+        <div class="dashboard-grid">
+            <!-- LEFT PANEL: Data Upload & Analysis -->
+            <div class="left-panel">
+                <!-- Data Upload Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-upload"></i> Upload Sri Lankan Dataset</h2>
+                        <span class="format-badge">Excel Only (.xlsx)</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="upload-zone" id="uploadZone">
+                            <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none;">
+                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                            <p class="upload-text">Click or drag to upload Excel dataset</p>
+                            <p class="upload-subtext">Supports Excel (.xlsx, .xls) formats only</p>
+                            <button type="button" class="btn btn-primary" id="selectFileBtn">
+                                <i class="fas fa-folder-open"></i> Select Excel File
+                            </button>
+                        </div>
+                        <div id="fileInfo" class="file-info" style="display: none;">
+                            <i class="fas fa-file-excel"></i>
+                            <div class="file-details">
+                                <p class="file-name" id="fileName"></p>
+                                <p class="file-meta" id="fileMeta"></p>
+                            </div>
+                            <button class="btn-remove" id="removeFileBtn">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-success" id="analyzeFileBtn" style="display: none; margin-top: 15px; width: 100%;">
+                            <i class="fas fa-chart-bar"></i> Analyze File
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Dataset Preview Section -->
+                <div class="card" id="previewCard" style="display: none;">
+                    <div class="card-header">
+                        <h2><i class="fas fa-table"></i> Dataset Preview</h2>
+                        <span class="info-badge" id="rowCount"></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table id="previewTable" class="data-table">
+                                <thead id="previewTableHead"></thead>
+                                <tbody id="previewTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Class Distribution Section -->
+                <div class="card" id="distributionCard" style="display: none;">
+                    <div class="card-header">
+                        <h2><i class="fas fa-chart-pie"></i> Class Distribution</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="distribution-stats" id="distributionStats"></div>
+                        <canvas id="distributionChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: ML Training & Results -->
+            <div class="right-panel">
+                <!-- ML Training Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-cogs"></i> ML Model Training</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="training-config">
+                            <div class="form-group">
+                                <label for="modelType">Model Type</label>
+                                <select id="modelType" class="form-control">
+                                    <option value="xgboost">XGBoost Classifier</option>
+                                    <option value="random_forest">Random Forest</option>
+                                    <option value="logistic">Logistic Regression</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="testSize">Test Size (%)</label>
+                                <input type="number" id="testSize" class="form-control" value="20" min="10" max="40">
+                            </div>
+                            <button class="btn btn-success btn-block" id="trainModelBtn" disabled>
+                                <i class="fas fa-play"></i> Train Model
+                            </button>
+                        </div>
+                        <div id="trainingProgress" class="training-progress" style="display: none;">
+                            <div class="spinner"></div>
+                            <p id="trainingStatus">Training model...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Model Results Section -->
+                <div class="card" id="resultsCard" style="display: none;">
+                    <div class="card-header">
+                        <h2><i class="fas fa-chart-line"></i> Model Performance</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="metrics-grid" id="metricsGrid"></div>
+                        <div class="confusion-matrix" id="confusionMatrix"></div>
+                    </div>
+                </div>
+
+                <!-- Live Prediction Section -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2><i class="fas fa-bolt"></i> Live Prediction</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="predictionForm" class="prediction-form">
+                            <!-- Form fields will be added dynamically -->
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>SIMGuard – Final Year Project by Thinara | 2025 | 🇱🇰 Sri Lankan Dataset Support</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="sl-ml-dashboard.js"></script>
+</body>
+</html>

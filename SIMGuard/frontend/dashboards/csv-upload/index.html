@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard - AI-Powered SIM Swap Detection Tool</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header Navigation -->
+    <header class="header">
+        <nav class="navbar">
+            <div class="nav-brand">
+                <i class="fas fa-shield-alt"></i>
+                <span>SIMGuard</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#home" class="nav-link active">Home</a></li>
+                <li><a href="../ml-dashboard/ml-dashboard.html" class="nav-link" style="color: #14b8a6; font-weight: 600;">🤖 ML Dashboard</a></li>
+                <li><a href="#about" class="nav-link">About SIM Swapping</a></li>
+                <li><a href="#upload" class="nav-link">Upload</a></li>
+                <li><a href="#results" class="nav-link">Results</a></li>
+                <li><a href="#report" class="nav-link">Download Report</a></li>
+            </ul>
+            <div class="hamburger">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Homepage / Landing Section -->
+        <section id="home" class="section hero-section">
+            <div class="container">
+                <div class="hero-content">
+                    <div class="hero-text">
+                        <h1 class="hero-title">SIMGuard: AI-Powered SIM Swap Detection Tool</h1>
+                        <p class="hero-subtitle">Analyze user activity and device logs to identify suspicious SIM swapping attempts using advanced AI and behavioral analytics.</p>
+                        <button class="cta-button" onclick="scrollToSection('upload')">
+                            <i class="fas fa-play"></i>
+                            Start Detection
+                        </button>
+                    </div>
+                    <div class="hero-visual">
+                        <div class="security-icon">
+                            <i class="fas fa-shield-alt"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- About SIM Swapping Section -->
+        <section id="about" class="section about-section">
+            <div class="container">
+                <h2 class="section-title">About SIM Swapping</h2>
+                <div class="about-content">
+                    <div class="about-card">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>What is SIM Swapping?</h3>
+                        <p>SIM swapping is a type of identity theft where attackers transfer a victim's phone number to their own SIM card, gaining access to SMS-based authentication.</p>
+                    </div>
+                    <div class="about-card">
+                        <i class="fas fa-brain"></i>
+                        <h3>AI Detection</h3>
+                        <p>Our AI analyzes patterns in user behavior, device changes, and network activity to identify potential SIM swap attacks in real-time.</p>
+                    </div>
+                    <div class="about-card">
+                        <i class="fas fa-chart-line"></i>
+                        <h3>Behavioral Analytics</h3>
+                        <p>Advanced algorithms track anomalies in location, device usage, and communication patterns to flag suspicious activities.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Upload Section -->
+        <section id="upload" class="section upload-section">
+            <div class="container">
+                <h2 class="section-title">Upload Log Files</h2>
+                <div class="upload-container">
+                    <div class="upload-box" id="uploadBox">
+                        <div class="upload-content">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <h3>Upload your log file</h3>
+                            <p>Drag and drop your CSV or JSON file here, or click to browse</p>
+                            <input type="file" id="fileInput" accept=".csv,.json" hidden>
+                            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                                Choose File
+                            </button>
+                        </div>
+                    </div>
+                    <div class="file-info" id="fileInfo" style="display: none;">
+                        <div class="file-details">
+                            <i class="fas fa-file-alt"></i>
+                            <div class="file-meta">
+                                <h4 id="fileName"></h4>
+                                <p id="fileSize"></p>
+                                <p id="fileType"></p>
+                            </div>
+                        </div>
+                        <button class="analyze-btn" onclick="analyzeFile()">
+                            <i class="fas fa-search"></i>
+                            Analyze File
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Detection Summary Section -->
+        <section id="results" class="section results-section" style="display: none;">
+            <div class="container">
+                <h2 class="section-title">Detection Results</h2>
+                <div class="results-overview">
+                    <div class="stat-card">
+                        <i class="fas fa-database"></i>
+                        <div class="stat-content">
+                            <h3 id="recordsProcessed">0</h3>
+                            <p>Records Processed</p>
+                        </div>
+                    </div>
+                    <div class="stat-card alert">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <div class="stat-content">
+                            <h3 id="suspiciousActivities">0</h3>
+                            <p>Suspicious Activities</p>
+                        </div>
+                    </div>
+                    <div class="stat-card success">
+                        <i class="fas fa-check-circle"></i>
+                        <div class="stat-content">
+                            <h3 id="cleanRecords">0</h3>
+                            <p>Clean Records</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="results-content">
+                    <div class="chart-container">
+                        <h3>Detection Summary</h3>
+                        <canvas id="detectionChart"></canvas>
+                    </div>
+                    
+                    <div class="table-container">
+                        <h3>Suspicious Activities</h3>
+                        <div class="table-wrapper">
+                            <table id="suspiciousTable">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>User ID</th>
+                                        <th>SIM ID</th>
+                                        <th>IP Address</th>
+                                        <th>Device ID</th>
+                                        <th>Flag Reason</th>
+                                        <th>Risk Level</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="suspiciousTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Report Generation Section -->
+        <section id="report" class="section report-section" style="display: none;">
+            <div class="container">
+                <h2 class="section-title">Investigation Report</h2>
+                <div class="report-content">
+                    <div class="report-info">
+                        <i class="fas fa-file-pdf"></i>
+                        <div class="report-details">
+                            <h3>Comprehensive Analysis Report</h3>
+                            <p>Report includes summary of anomalies and technical metadata for digital forensics.</p>
+                            <ul>
+                                <li>Detailed threat analysis</li>
+                                <li>Timeline of suspicious activities</li>
+                                <li>Risk assessment scores</li>
+                                <li>Recommended security actions</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <button class="download-btn" onclick="downloadReport()">
+                        <i class="fas fa-download"></i>
+                        Download Investigation Report
+                    </button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>SIMGuard</span>
+                </div>
+                <div class="footer-text">
+                    <p>SIMGuard – Final Year Project by Thinara | 2025</p>
+                </div>
+                <div class="footer-links">
+                    <a href="#" class="footer-link">Documentation</a>
+                    <a href="#" class="footer-link">GitHub</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

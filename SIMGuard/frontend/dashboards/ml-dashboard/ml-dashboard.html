@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard - ML Detection Dashboard</title>
+    <link rel="stylesheet" href="ml-dashboard.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation Header -->
+    <header class="main-header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>SIMGuard ML</span>
+                </div>
+                <nav class="nav-links">
+                    <a href="../csv-upload/index.html">Home</a>
+                    <a href="ml-dashboard.html" class="active">ML Dashboard</a>
+                    <a href="#about">About</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main class="dashboard-container">
+        <div class="container">
+            <div class="dashboard-grid">
+                <!-- Left Panel - Input Form -->
+                <div class="input-panel">
+                    <div class="panel-header">
+                        <h1><i class="fas fa-search"></i> SIM Swap Attack Detector</h1>
+                        <p>Enter user behavior data to analyze potential SIM swap attacks</p>
+                    </div>
+
+                    <form id="detectionForm" class="detection-form">
+                        <!-- Numeric Inputs -->
+                        <div class="form-section">
+                            <h3>Behavioral Metrics</h3>
+                            
+                            <div class="form-group">
+                                <label for="distanceChange">Distance Change (km)</label>
+                                <input type="number" id="distanceChange" name="distance_change" step="0.1" min="0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="timeSinceSIM">Time Since Last SIM Change (hours)</label>
+                                <input type="number" id="timeSinceSIM" name="time_since_sim_change" step="0.1" min="0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="failedLogins">Num Failed Logins (24h)</label>
+                                <input type="number" id="failedLogins" name="num_failed_logins_last_24h" min="0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="numCalls">Num Calls (24h)</label>
+                                <input type="number" id="numCalls" name="num_calls_last_24h" min="0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="numSMS">Num SMS (24h)</label>
+                                <input type="number" id="numSMS" name="num_sms_last_24h" min="0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="dataUsage">Data Usage Change (%)</label>
+                                <input type="number" id="dataUsage" name="data_usage_change_percent" step="0.1" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="cellTower">Cell Tower Changes (count)</label>
+                                <input type="number" id="cellTower" name="change_in_cell_tower_id" min="0" required>
+                            </div>
+                        </div>
+
+                        <!-- Toggle Switches -->
+                        <div class="form-section">
+                            <h3>Status Flags</h3>
+                            
+                            <div class="toggle-group">
+                                <label class="toggle-label">
+                                    <span>Is Roaming</span>
+                                    <input type="checkbox" id="isRoaming" name="is_roaming">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="toggle-group">
+                                <label class="toggle-label">
+                                    <span>SIM Change Flag</span>
+                                    <input type="checkbox" id="simChange" name="sim_change_flag">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="toggle-group">
+                                <label class="toggle-label">
+                                    <span>Device Change Flag</span>
+                                    <input type="checkbox" id="deviceChange" name="device_change_flag">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Text Inputs -->
+                        <div class="form-section">
+                            <h3>Location Data</h3>
+                            
+                            <div class="form-group">
+                                <label for="currentCity">Current City</label>
+                                <input type="text" id="currentCity" name="current_city" placeholder="e.g., New York" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="previousCity">Previous City</label>
+                                <input type="text" id="previousCity" name="previous_city" placeholder="e.g., Los Angeles" required>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-shield-alt"></i> Analyze Risk
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="clearBtn">
+                                <i class="fas fa-redo"></i> Clear Form
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Right Panel - Results -->
+                <div class="results-panel">
+                    <div class="results-content" id="resultsContent">
+                        <!-- Initial State -->
+                        <div class="empty-state" id="emptyState">
+                            <i class="fas fa-chart-line"></i>
+                            <h2>Ready to Analyze</h2>
+                            <p>Fill in the form and click "Analyze Risk" to detect potential SIM swap attacks</p>
+                        </div>
+
+                        <!-- Loading State -->
+                        <div class="loading-state hidden" id="loadingState">
+                            <div class="spinner"></div>
+                            <p>Analyzing behavior patterns...</p>
+                        </div>
+
+                        <!-- Results State -->
+                        <div class="results-display hidden" id="resultsDisplay">
+                            <!-- Risk Indicator -->
+                            <div class="risk-indicator" id="riskIndicator">
+                                <div class="risk-icon" id="riskIcon"></div>
+                                <h2 id="riskStatus">ANALYZING...</h2>
+                                <p id="riskMessage"></p>
+                            </div>
+
+                            <!-- Confidence Score -->
+                            <div class="confidence-section">
+                                <h3>Confidence Score</h3>
+                                <div class="confidence-bar">
+                                    <div class="confidence-fill" id="confidenceFill"></div>
+                                </div>
+                                <p class="confidence-text" id="confidenceText">0%</p>
+                            </div>
+
+                            <!-- Risk Factors -->
+                            <div class="risk-factors">
+                                <h3>Key Risk Factors</h3>
+                                <ul id="riskFactorsList"></ul>
+                            </div>
+
+                            <!-- Export Button -->
+                            <button class="btn btn-export" id="exportBtn">
+                                <i class="fas fa-download"></i> Download Report
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Recent Predictions Table -->
+                    <div class="recent-predictions">
+                        <h3>Recent Predictions</h3>
+                        <div class="table-container">
+                            <table id="predictionsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Risk Level</th>
+                                        <th>Confidence</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="predictionsBody">
+                                    <tr class="empty-row">
+                                        <td colspan="3">No predictions yet</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+        <div class="container">
+            <p>SIMGuard – Final Year Project by Thinara | 2025</p>
+            <p class="tech-stack">Powered by XGBoost ML Model</p>
+        </div>
+    </footer>
+
+    <script src="ml-dashboard.js"></script>
+</body>
+</html>
+
