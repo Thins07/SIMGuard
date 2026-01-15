@@ -55,6 +55,7 @@ from .config import (
     FAILED_LOGIN_COUNT_THRESHOLD,
     ROAMING_AFTER_SIM_HOURS,
     RISK_WEIGHTS,
+    ALERT_THRESHOLDS,
     CITY_COORDINATES
 )
 from .utils import calculate_distance, hours_between, percentage_change, format_alert_emoji
@@ -252,7 +253,7 @@ class RuleEngine:
         #     risk_score = (risk_score * 0.6) + (ml_score * 0.4)  # Hybrid approach
 
         # STEP 3: Determine alert level
-        from utils import format_alert_level, format_alert_emoji
+        from .utils import format_alert_level, format_alert_emoji
         alert_level = format_alert_level(risk_score)
         alert_emoji = format_alert_emoji(alert_level)
 

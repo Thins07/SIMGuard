@@ -143,4 +143,3 @@ def percentage_change(old_value: float, new_value: float) -> float:
     
     change = ((new_value - old_value) / old_value) * 100
     return round(change, 2)
-
