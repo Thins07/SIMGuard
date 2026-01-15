@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard | Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+    <div class="nav-brand"><span>SIMGuard</span> | Dashboard</div>
+    <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="upload.html">Upload</a></li>
+        <li><a class="active" href="dashboard.html">Dashboard</a></li>
+        <li><a href="report.html">Report</a></li>
+    </ul>
+</nav>
+<main class="main">
+    <section class="card">
+        <h1>Analysis Dashboard</h1>
+        <p style="color:var(--muted); margin-top:6px;">Latest rule-based results. If empty, upload a dataset and run analysis from the Upload page.</p>
+        <div class="actions" style="margin-top:10px;">
+            <button class="btn" onclick="loadResults()">Refresh Results</button>
+            <a class="btn secondary" href="upload.html">Upload New Dataset</a>
+            <a class="btn ghost" href="report.html">Go to Report</a>
+        </div>
+        <div id="message" style="margin-top:10px;"></div>
+    </section>
+
+    <section class="grid two" id="summaryCards"></section>
+
+    <section class="card">
+        <h2>Suspicious Findings</h2>
+        <p style="color:var(--muted);">Top flagged users and reasons.</p>
+        <div id="tableWrap" style="overflow:auto; margin-top:10px;"></div>
+    </section>
+</main>
+<footer>SIMGuard • Rule-Based Detection</footer>
+
+<script>
+const API_BASE = 'http://localhost:5000';
+
+function statusChip(level) {
+    const lower = level.toLowerCase();
+    const cls = lower === 'high' ? 'high' : (lower === 'medium' ? 'medium' : 'low');
+    return `<span class="status-chip ${cls}">${level}</span>`;
+}
+
+async function loadResults() {
+    setMessage('Loading latest results...', 'notice');
+    try {
+        const resp = await fetch(`${API_BASE}/results`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.message || 'Unable to load results');
+
+        renderSummary(data);
+        renderTable(data.suspicious_activities || []);
+        setMessage(`Last analysis: ${data.analysis_timestamp}`, 'success');
+    } catch (err) {
+        renderSummary(null);
+        renderTable([]);
+        setMessage(err.message, 'error');
+    }
+}
+
+function renderSummary(data) {
+    const container = document.getElementById('summaryCards');
+    container.innerHTML = '';
+    if (!data) return;
+
+    const cards = [
+        { title: 'Records Processed', value: data.summary.total_records },
+        { title: 'Users Analyzed', value: data.summary.users_analyzed },
+        { title: 'Suspicious Users', value: (data.summary.high_risk_users + data.summary.medium_risk_users) },
+        { title: 'Clean Users', value: data.summary.clean_users },
+        { title: 'High Risk', value: data.risk_distribution.High || 0 },
+        { title: 'Medium Risk', value: data.risk_distribution.Medium || 0 },
+    ];
+
+    container.innerHTML = cards.map(card => `
+        <div class="card">
+            <p style="color:var(--muted);">${card.title}</p>
+            <h2 style="margin-top:6px;">${card.value}</h2>
+        </div>
+    `).join('');
+}
+
+function renderTable(rows) {
+    const wrap = document.getElementById('tableWrap');
+    if (!rows.length) {
+        wrap.innerHTML = '<p style="color:var(--muted);">No suspicious users detected yet.</p>';
+        return;
+    }
+
+    const limited = rows.slice(0, 50);
+    wrap.innerHTML = `
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>User</th>
+                    <th>SIM</th>
+                    <th>Risk</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${limited.map(row => `
+                    <tr>
+                        <td>${row.timestamp}</td>
+                        <td>${row.user_id}</td>
+                        <td>${row.sim_id}</td>
+                        <td>${statusChip(row.risk_level)}</td>
+                        <td>${row.flag_reason}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function setMessage(text, variant = 'notice') {
+    const el = document.getElementById('message');
+    const cls = variant === 'error' ? 'error' : (variant === 'success' ? 'success' : 'notice');
+    el.className = cls;
+    el.textContent = text;
+}
+
+loadResults();
+</script>
+</body>
+</html>

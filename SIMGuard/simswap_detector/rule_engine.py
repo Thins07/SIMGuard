@@ -40,8 +40,24 @@ FUTURE WORK - Machine Learning Integration Points:
 
 from typing import Dict, List, Tuple
 from datetime import datetime
-import config
-from utils import calculate_distance, hours_between, percentage_change
+from .config import (
+    SIM_CHANGE_HOURS_THRESHOLD,
+    DEVICE_CHANGE_AFTER_SIM_HOURS,
+    LOCATION_DISTANCE_KM_THRESHOLD,
+    LOCATION_TIME_HOURS_THRESHOLD,
+    CELL_TOWER_CHANGE_COUNT_THRESHOLD,
+    DATA_USAGE_INCREASE_PERCENT,
+    DATA_USAGE_DECREASE_PERCENT,
+    CALL_INCREASE_PERCENT,
+    CALL_DECREASE_PERCENT,
+    SMS_INCREASE_PERCENT,
+    SMS_DECREASE_PERCENT,
+    FAILED_LOGIN_COUNT_THRESHOLD,
+    ROAMING_AFTER_SIM_HOURS,
+    RISK_WEIGHTS,
+    CITY_COORDINATES
+)
+from .utils import calculate_distance, hours_between, percentage_change, format_alert_emoji
 
 
 class RuleEngine:
@@ -82,8 +98,8 @@ class RuleEngine:
         """Rule 1: Check if SIM was recently changed"""
         hours_since_sim_change = user_data.get('hours_since_sim_change', 999)
         
-        if hours_since_sim_change <= config.SIM_CHANGE_HOURS_THRESHOLD:
-            return True, f"SIM changed {hours_since_sim_change:.1f} hours ago (threshold: {config.SIM_CHANGE_HOURS_THRESHOLD}h)"
+        if hours_since_sim_change <= SIM_CHANGE_HOURS_THRESHOLD:
+            return True, f"SIM changed {hours_since_sim_change:.1f} hours ago (threshold: {SIM_CHANGE_HOURS_THRESHOLD}h)"
         return False, ""
     
     def check_device_change_after_sim(self, user_data: Dict) -> Tuple[bool, str]:
@@ -91,8 +107,8 @@ class RuleEngine:
         device_changed = user_data.get('device_changed_after_sim', False)
         hours_between_changes = user_data.get('hours_between_sim_device_change', 999)
         
-        if device_changed and hours_between_changes <= config.DEVICE_CHANGE_AFTER_SIM_HOURS:
-            return True, f"Device changed {hours_between_changes:.1f}h after SIM change (threshold: {config.DEVICE_CHANGE_AFTER_SIM_HOURS}h)"
+        if device_changed and hours_between_changes <= DEVICE_CHANGE_AFTER_SIM_HOURS:
+            return True, f"Device changed {hours_between_changes:.1f}h after SIM change (threshold: {DEVICE_CHANGE_AFTER_SIM_HOURS}h)"
         return False, ""
     
     def check_sudden_location_change(self, user_data: Dict) -> Tuple[bool, str]:
@@ -104,8 +120,8 @@ class RuleEngine:
         if prev_city and curr_city and prev_city != curr_city:
             distance = calculate_distance(prev_city, curr_city)
             
-            if distance >= config.LOCATION_DISTANCE_KM_THRESHOLD and \
-               hours_since_change <= config.LOCATION_TIME_HOURS_THRESHOLD:
+            if distance >= LOCATION_DISTANCE_KM_THRESHOLD and \
+               hours_since_change <= LOCATION_TIME_HOURS_THRESHOLD:
                 return True, f"Location changed {distance}km ({prev_city}→{curr_city}) in {hours_since_change:.1f}h"
         return False, ""
     
@@ -113,8 +129,8 @@ class RuleEngine:
         """Rule 4: Check for abnormal cell tower changes"""
         tower_changes = user_data.get('cell_tower_changes_24h', 0)
         
-        if tower_changes >= config.CELL_TOWER_CHANGE_COUNT_THRESHOLD:
-            return True, f"{tower_changes} cell tower changes in 24h (threshold: {config.CELL_TOWER_CHANGE_COUNT_THRESHOLD})"
+        if tower_changes >= CELL_TOWER_CHANGE_COUNT_THRESHOLD:
+            return True, f"{tower_changes} cell tower changes in 24h (threshold: {CELL_TOWER_CHANGE_COUNT_THRESHOLD})"
         return False, ""
     
     def check_abnormal_data_usage(self, user_data: Dict) -> Tuple[bool, str]:
@@ -125,9 +141,9 @@ class RuleEngine:
         if prev_data > 0:
             change_pct = percentage_change(prev_data, curr_data)
             
-            if change_pct >= config.DATA_USAGE_INCREASE_PERCENT:
+            if change_pct >= DATA_USAGE_INCREASE_PERCENT:
                 return True, f"Data usage increased {change_pct:.1f}% ({prev_data}MB→{curr_data}MB)"
-            elif change_pct <= -config.DATA_USAGE_DECREASE_PERCENT:
+            elif change_pct <= DATA_USAGE_DECREASE_PERCENT:
                 return True, f"Data usage decreased {abs(change_pct):.1f}% ({prev_data}MB→{curr_data}MB)"
         return False, ""
     
@@ -139,9 +155,9 @@ class RuleEngine:
         if prev_calls > 0:
             change_pct = percentage_change(prev_calls, curr_calls)
             
-            if change_pct >= config.CALL_INCREASE_PERCENT:
+            if change_pct >= CALL_INCREASE_PERCENT:
                 return True, f"Calls increased {change_pct:.1f}% ({prev_calls}→{curr_calls} calls)"
-            elif change_pct <= -config.CALL_DECREASE_PERCENT:
+            elif change_pct <= CALL_DECREASE_PERCENT:
                 return True, f"Calls decreased {abs(change_pct):.1f}% ({prev_calls}→{curr_calls} calls)"
         return False, ""
     
@@ -153,9 +169,9 @@ class RuleEngine:
         if prev_sms > 0:
             change_pct = percentage_change(prev_sms, curr_sms)
             
-            if change_pct >= config.SMS_INCREASE_PERCENT:
+            if change_pct >= SMS_INCREASE_PERCENT:
                 return True, f"SMS increased {change_pct:.1f}% ({prev_sms}→{curr_sms} messages)"
-            elif change_pct <= -config.SMS_DECREASE_PERCENT:
+            elif change_pct <= SMS_DECREASE_PERCENT:
                 return True, f"SMS decreased {abs(change_pct):.1f}% ({prev_sms}→{curr_sms} messages)"
         return False, ""
     
@@ -163,8 +179,8 @@ class RuleEngine:
         """Rule 8: Check for failed login attempts"""
         failed_logins = user_data.get('failed_logins_24h', 0)
         
-        if failed_logins >= config.FAILED_LOGIN_COUNT_THRESHOLD:
-            return True, f"{failed_logins} failed login attempts in 24h (threshold: {config.FAILED_LOGIN_COUNT_THRESHOLD})"
+        if failed_logins >= FAILED_LOGIN_COUNT_THRESHOLD:
+            return True, f"{failed_logins} failed login attempts in 24h (threshold: {FAILED_LOGIN_COUNT_THRESHOLD})"
         return False, ""
     
     def check_roaming_after_sim_change(self, user_data: Dict) -> Tuple[bool, str]:
@@ -172,8 +188,8 @@ class RuleEngine:
         is_roaming = user_data.get('is_roaming', False)
         hours_since_sim_change = user_data.get('hours_since_sim_change', 999)
         
-        if is_roaming and hours_since_sim_change <= config.ROAMING_AFTER_SIM_HOURS:
-            return True, f"Roaming started {hours_since_sim_change:.1f}h after SIM change (threshold: {config.ROAMING_AFTER_SIM_HOURS}h)"
+        if is_roaming and hours_since_sim_change <= ROAMING_AFTER_SIM_HOURS:
+            return True, f"Roaming started {hours_since_sim_change:.1f}h after SIM change (threshold: {ROAMING_AFTER_SIM_HOURS}h)"
         return False, ""
     
     def evaluate_user(self, user_data: Dict) -> Dict:
@@ -219,7 +235,7 @@ class RuleEngine:
             triggered, reason = rule_func(user_data)
 
             if triggered:
-                weight = config.RISK_WEIGHTS.get(rule_name, 0)
+                weight = RISK_WEIGHTS.get(rule_name, 0)
                 risk_score += weight
                 triggered_rules.append({
                     'rule': rule_name,

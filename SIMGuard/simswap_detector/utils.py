@@ -5,7 +5,7 @@ Utility functions for SIM Swap Detection System
 import math
 from datetime import datetime, timedelta
 from typing import Tuple
-from config import CITY_COORDINATES
+from .config import CITY_COORDINATES
 
 
 def calculate_distance(city1: str, city2: str) -> float:

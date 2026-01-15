@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard | Report</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+    <div class="nav-brand"><span>SIMGuard</span> | Report</div>
+    <ul>
+        <li><a href="index.html">Introduction</a></li>
+        <li><a href="upload.html">Upload</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a class="active" href="report.html">Report</a></li>
+    </ul>
+</nav>
+<main class="main">
+    <section class="card">
+        <h1>Generate PDF Report</h1>
+        <p style="color:var(--muted); margin-top:6px;">Creates an executive summary with rule-based findings, risk distribution, and recommendations. Run analysis first, then download.</p>
+        <div class="actions" style="margin-top:12px;">
+            <button class="btn" onclick="downloadReport()">Download PDF</button>
+            <button class="btn secondary" onclick="previewStats()">Preview Current Stats</button>
+        </div>
+        <div id="message" style="margin-top:12px;"></div>
+        <div id="stats" class="grid two" style="margin-top:12px;"></div>
+    </section>
+</main>
+<footer>SIMGuard • Rule-Based Detection</footer>
+
+<script>
+const API_BASE = 'http://localhost:5000';
+
+async function downloadReport() {
+    setMessage('Generating PDF...', 'notice');
+    try {
+        const resp = await fetch(`${API_BASE}/report`);
+        if (!resp.ok) {
+            const data = await resp.json();
+            throw new Error(data.message || 'Report generation failed');
+        }
+        const blob = await resp.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SIMGuard_Report_${Date.now()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        setMessage('Report downloaded.', 'success');
+    } catch (err) {
+        setMessage(err.message, 'error');
+    }
+}
+
+async function previewStats() {
+    setMessage('Loading current results...', 'notice');
+    try {
+        const resp = await fetch(`${API_BASE}/results`);
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.message || 'No results available');
+        renderStats(data);
+        setMessage('Preview loaded.', 'success');
+    } catch (err) {
+        document.getElementById('stats').innerHTML = '';
+        setMessage(err.message, 'error');
+    }
+}
+
+function renderStats(data) {
+    const statsEl = document.getElementById('stats');
+    const dist = data.risk_distribution || { High: 0, Medium: 0, Low: 0 };
+    statsEl.innerHTML = `
+        <div class="card">
+            <p style="color:var(--muted);">Records Processed</p>
+            <h2>${data.summary.total_records}</h2>
+        </div>
+        <div class="card">
+            <p style="color:var(--muted);">High Risk Users</p>
+            <h2>${dist.High || 0}</h2>
+        </div>
+        <div class="card">
+            <p style="color:var(--muted);">Medium Risk Users</p>
+            <h2>${dist.Medium || 0}</h2>
+        </div>
+        <div class="card">
+            <p style="color:var(--muted);">Clean Users</p>
+            <h2>${dist.Low || 0}</h2>
+        </div>
+    `;
+}
+
+function setMessage(text, variant = 'notice') {
+    const el = document.getElementById('message');
+    const cls = variant === 'error' ? 'error' : (variant === 'success' ? 'success' : 'notice');
+    el.className = cls;
+    el.textContent = text;
+}
+</script>
+</body>
+</html>

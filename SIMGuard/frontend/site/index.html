@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIMGuard | Introduction</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+    <div class="nav-brand"><span>SIMGuard</span> | Rule-Based</div>
+    <ul>
+        <li><a class="active" href="index.html">Introduction</a></li>
+        <li><a href="upload.html">Upload</a></li>
+        <li><a href="dashboard.html">Dashboard</a></li>
+        <li><a href="report.html">Report</a></li>
+    </ul>
+</nav>
+<main class="main">
+    <section class="hero card">
+        <p class="status-chip high">🚨 Final Year Project • Rule-Based Only</p>
+        <h1>SIMGuard: End-to-End SIM Swap Detection with Explainable Rules</h1>
+        <p>Analyze telecom activity logs, flag risky behavior, and produce an auditor-ready PDF report. This flow is 100% deterministic and explainable—no machine learning involved.</p>
+        <div class="actions">
+            <a class="btn" href="upload.html">Start with Dataset Upload</a>
+            <a class="btn secondary" href="dashboard.html">View Dashboard</a>
+        </div>
+    </section>
+
+    <section class="grid two">
+        <div class="card">
+            <h2>Flow Overview</h2>
+            <p>Upload CSV or Excel → Run rule engine → Review dashboard → Download PDF report.</p>
+            <ul style="margin-top:10px; color:var(--muted); line-height:1.6;">
+                <li>Accepts .csv, .xlsx, .xls files</li>
+                <li>Rule-based detection across SIM, device, location, and logins</li>
+                <li>Risk levels: Low, Medium, High with reasons</li>
+            </ul>
+        </div>
+        <div class="card">
+            <h2>Rule Indicators</h2>
+            <p>Deterministic checks inspired by telecom fraud playbooks.</p>
+            <ul style="margin-top:10px; color:var(--muted); line-height:1.6;">
+                <li>Recent SIM changes and device swaps</li>
+                <li>Sudden location shifts (impossible travel)</li>
+                <li>Failed logins after risky changes</li>
+                <li>Roaming and anomaly placeholders for future expansion</li>
+            </ul>
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Submission Notes</h2>
+        <p class="notice">This is the final academic submission. ML endpoints are disabled; all results come from the rule engine for clarity and explainability.</p>
+    </section>
+</main>
+<footer>SIMGuard • Final Year Project • Rule-Based Detection</footer>
+</body>
+</html>

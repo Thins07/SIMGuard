@@ -21,8 +21,14 @@ from fpdf import FPDF
 import io
 import logging
 from typing import Dict, List, Tuple, Any
-from ml_predictor import SIMSwapPredictor
-from sl_ml_handler import SriLankanMLHandler
+import sys
+
+# Add project root to import path so we can use the shared rule engine
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from simswap_detector.rule_engine import RuleEngine
+from simswap_detector import config
+from simswap_detector.utils import hours_between
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,31 +46,20 @@ CORS(app, origins=['*'])
 analysis_results = {}
 uploaded_data = None
 
-# Initialize ML Predictor
-ml_predictor = SIMSwapPredictor(
-    model_path='xgboost_simswap_model.pkl',
-    scaler_path='scaler.pkl'
-)
-
-# Initialize Sri Lankan ML Handler
-sl_ml_handler = SriLankanMLHandler()
+# Initialize Rule Engine (Rule-Based Only for FYP)
+rule_engine = RuleEngine()
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'csv'}
+ALLOWED_EXTENSIONS = {'csv', 'xlsx', 'xls'}
 TEMP_DIR = tempfile.gettempdir()
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Load ML model on startup
-try:
-    if ml_predictor.load_model():
-        logger.info("✅ ML Model loaded successfully")
-    else:
-        logger.warning("⚠️ ML Model not loaded - prediction endpoint will not work")
-except Exception as e:
-    logger.error(f"❌ Error loading ML model: {e}")
+# ML model intentionally disabled for final rule-based FYP
+ml_predictor = None
+sl_ml_handler = None
 
 def allowed_file(filename: str) -> bool:
     """Check if uploaded file has allowed extension"""
@@ -72,23 +67,26 @@ def allowed_file(filename: str) -> bool:
 
 def validate_csv_structure(df: pd.DataFrame) -> Tuple[bool, str]:
     """
-    Validate that CSV has required columns for SIM swap detection
-    
-    Args:
-        df: Pandas DataFrame from uploaded CSV
-        
-    Returns:
-        Tuple of (is_valid, error_message)
+    Validate uploaded dataset has the minimum required columns.
+    Supports both CSV and Excel inputs with flexible column names.
     """
-    required_columns = ['timestamp', 'user_id', 'sim_id', 'device_id', 'ip', 'location', 'login_status']
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    
+    base_required = ['timestamp', 'user_id', 'sim_id', 'device_id', 'location']
+    alt_ip = ['ip', 'ip_address']
+    alt_login = ['login_status', 'success']
+
+    missing_columns = [col for col in base_required if col not in df.columns]
     if missing_columns:
         return False, f"Missing required columns: {', '.join(missing_columns)}"
-    
+
+    if not any(col in df.columns for col in alt_ip):
+        return False, "Missing IP column. Use either 'ip' or 'ip_address'."
+
+    if not any(col in df.columns for col in alt_login):
+        return False, "Missing login status column. Use 'login_status' or 'success'."
+
     if df.empty:
-        return False, "CSV file is empty"
-    
+        return False, "Uploaded file is empty"
+
     return True, ""
 
 def parse_timestamp(timestamp_str: str) -> datetime:
@@ -115,6 +113,161 @@ def parse_timestamp(timestamp_str: str) -> datetime:
     except Exception as e:
         logger.warning(f"Could not parse timestamp: {timestamp_str}, error: {e}")
         return datetime.now()
+
+
+def load_uploaded_dataframe(filepath: str) -> pd.DataFrame:
+    """Load uploaded CSV/Excel into a DataFrame with proper parser."""
+    extension = filepath.rsplit('.', 1)[-1].lower()
+
+    if extension == 'csv':
+        return pd.read_csv(filepath)
+    if extension in ['xlsx', 'xls']:
+        return pd.read_excel(filepath, engine='openpyxl')
+
+    raise ValueError(f"Unsupported file type: {extension}")
+
+
+def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize column names and formats for downstream processing."""
+    rename_map = {}
+
+    if 'ip_address' in df.columns and 'ip' not in df.columns:
+        rename_map['ip_address'] = 'ip'
+
+    if 'success' in df.columns and 'login_status' not in df.columns:
+        rename_map['success'] = 'login_status'
+
+    df = df.rename(columns=rename_map)
+
+    # Normalize login status to success/failed strings
+    if 'login_status' in df.columns:
+        df['login_status'] = df['login_status'].apply(lambda v: 'success' if str(v).lower() in ['true', '1', 'yes', 'success'] else 'failed')
+    else:
+        df['login_status'] = 'success'
+
+    # Normalize locations for distance calculations (strip noise, title-case to match config)
+    if 'location' in df.columns:
+        df['location'] = df['location'].astype(str).str.strip().str.title()
+
+    # Ensure activity_type exists for UI display
+    if 'activity_type' not in df.columns:
+        df['activity_type'] = 'event'
+
+    # Parse timestamps safely
+    df['timestamp'] = df['timestamp'].apply(parse_timestamp)
+
+    return df
+
+
+def build_user_feature_rows(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Transform raw events into per-user feature rows for the rule engine.
+    Returns (user_features, suspicious_activity_rows)
+    """
+    user_features: List[Dict[str, Any]] = []
+    suspicious_rows: List[Dict[str, Any]] = []
+
+    for user_id, group in df.groupby('user_id'):
+        group = group.sort_values('timestamp').reset_index(drop=True)
+        end_time = group['timestamp'].max()
+
+        last_sim_id = None
+        last_device_id = None
+        last_location = None
+        last_sim_change_time = None
+        last_location_change_time = None
+        previous_city = ''
+        current_city = ''
+        device_change_after_sim = False
+        hours_between_sim_device_change = 999
+
+        # Failed logins in last 24h relative to end_time
+        recent_failed_mask = (group['login_status'] == 'failed') & ((end_time - group['timestamp']).dt.total_seconds() / 3600 <= 24)
+        failed_logins_24h = int(recent_failed_mask.sum())
+
+        for _, row in group.iterrows():
+            ts = row['timestamp']
+
+            # Track SIM changes
+            if last_sim_id is not None and row['sim_id'] != last_sim_id:
+                last_sim_change_time = ts
+
+            # Track device change after SIM change
+            if last_sim_change_time and last_device_id is not None and row['device_id'] != last_device_id:
+                hours_between_sim_device_change = hours_between(ts, last_sim_change_time)
+                if hours_between_sim_device_change <= config.DEVICE_CHANGE_AFTER_SIM_HOURS:
+                    device_change_after_sim = True
+
+            # Track location changes
+            if last_location is not None and row['location'] != last_location:
+                previous_city = last_location
+                current_city = row['location']
+                last_location_change_time = ts
+
+            last_sim_id = row['sim_id']
+            last_device_id = row['device_id']
+            last_location = row['location']
+
+        hours_since_sim_change = hours_between(end_time, last_sim_change_time) if last_sim_change_time else 999
+        hours_since_location_change = hours_between(end_time, last_location_change_time) if last_location_change_time else 999
+
+        if not previous_city:
+            previous_city = last_location or ''
+        if not current_city:
+            current_city = last_location or ''
+
+        feature_row = {
+            'user_id': user_id,
+            'hours_since_sim_change': hours_since_sim_change,
+            'device_changed_after_sim': device_change_after_sim,
+            'hours_between_sim_device_change': hours_between_sim_device_change,
+            'previous_city': previous_city,
+            'current_city': current_city,
+            'hours_since_location_change': hours_since_location_change,
+            'cell_tower_changes_24h': 0,
+            'previous_data_usage_mb': 0,
+            'current_data_usage_mb': 0,
+            'previous_calls_24h': 0,
+            'current_calls_24h': 0,
+            'previous_sms_24h': 0,
+            'current_sms_24h': 0,
+            'failed_logins_24h': failed_logins_24h,
+            'is_roaming': False,
+            # Keep references for reporting
+            '_summary': {
+                'last_sim_id': last_sim_id,
+                'last_device_id': last_device_id,
+                'last_location': last_location,
+                'end_time': end_time
+            }
+        }
+
+        rule_result = rule_engine.evaluate_user(feature_row)
+
+        user_features.append({
+            'user_id': user_id,
+            'risk_score': rule_result['risk_score'],
+            'alert_level': rule_result['alert_level'],
+            'alert_emoji': rule_result['alert_emoji'],
+            'triggered_rules': rule_result['triggered_rules'],
+            'total_rules_triggered': rule_result['total_rules_triggered'],
+            'sim_id': last_sim_id,
+            'device_id': last_device_id,
+            'location': last_location,
+            'last_seen': end_time.strftime('%Y-%m-%d %H:%M:%S')
+        })
+
+        if rule_result['triggered_rules']:
+            reasons = '; '.join(r['reason'] for r in rule_result['triggered_rules'])
+            suspicious_rows.append({
+                'timestamp': end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                'user_id': user_id,
+                'sim_id': last_sim_id or 'N/A',
+                'risk_level': rule_result['alert_level'].title(),
+                'flag_reason': reasons
+            })
+
+    return user_features, suspicious_rows
 
 def calculate_distance(loc1: str, loc2: str) -> float:
     """
@@ -186,13 +339,8 @@ def is_suspicious_ip_change(ip1: str, ip2: str) -> bool:
 
 def analyze_user_behavior(user_data: pd.DataFrame) -> List[Dict[str, Any]]:
     """
-    Analyze user behavior for suspicious SIM swap activities
-    
-    Args:
-        user_data: DataFrame containing all records for a specific user
-        
-    Returns:
-        List of suspicious activities with details
+    LEGACY (unused): Retained only for reference to the earlier heuristic analyzer.
+    The active pipeline uses the shared rule engine via build_user_feature_rows().
     """
     suspicious_activities = []
     
@@ -278,7 +426,7 @@ def home():
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """
-    Handle CSV file upload and perform initial validation
+    Handle CSV/Excel upload and perform initial validation
     """
     global uploaded_data, analysis_results
     
@@ -303,55 +451,55 @@ def upload_file():
         if not allowed_file(file.filename):
             return jsonify({
                 'status': 'error',
-                'message': 'Invalid file type. Please upload a CSV file.'
+                'message': 'Invalid file type. Please upload a CSV or Excel file.'
             }), 400
-        
+
         # Save file temporarily
         filename = secure_filename(file.filename)
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         file.save(filepath)
-        
-        # Read and validate CSV
+
         try:
-            df = pd.read_csv(filepath)
+            # Load CSV/Excel
+            df = load_uploaded_dataframe(filepath)
+            # Basic structure validation
+            is_valid, error_msg = validate_csv_structure(df)
+            if not is_valid:
+                os.remove(filepath)
+                return jsonify({
+                    'status': 'error',
+                    'message': error_msg
+                }), 400
+
+            # Normalize for downstream use
+            df = normalize_uploaded_dataframe(df)
+
+            # Store data globally for analysis
+            uploaded_data = df
+
+            logger.info(f"Successfully uploaded and processed file: {filename}")
+
+            return jsonify({
+                'status': 'success',
+                'message': 'File uploaded and validated successfully',
+                'filename': filename,
+                'records_count': len(df),
+                'columns': list(df.columns),
+                'date_range': {
+                    'start': df['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S'),
+                    'end': df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
+                }
+            })
         except Exception as e:
-            os.remove(filepath)  # Clean up
+            logger.error(f"Error processing uploaded file: {e}")
             return jsonify({
                 'status': 'error',
-                'message': f'Error reading CSV file: {str(e)}'
+                'message': f'Error reading file: {str(e)}'
             }), 400
-        
-        # Validate CSV structure
-        is_valid, error_msg = validate_csv_structure(df)
-        if not is_valid:
-            os.remove(filepath)  # Clean up
-            return jsonify({
-                'status': 'error',
-                'message': error_msg
-            }), 400
-        
-        # Parse timestamps
-        df['timestamp'] = df['timestamp'].apply(parse_timestamp)
-        
-        # Store data globally for analysis
-        uploaded_data = df
-        
-        # Clean up uploaded file
-        os.remove(filepath)
-        
-        logger.info(f"Successfully uploaded and processed file: {filename}")
-        
-        return jsonify({
-            'status': 'success',
-            'message': 'File uploaded and validated successfully',
-            'filename': filename,
-            'records_count': len(df),
-            'columns': list(df.columns),
-            'date_range': {
-                'start': df['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S'),
-                'end': df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
-            }
-        })
+        finally:
+            # Clean up uploaded file
+            if os.path.exists(filepath):
+                os.remove(filepath)
         
     except Exception as e:
         logger.error(f"Error in upload endpoint: {str(e)}")
@@ -371,59 +519,45 @@ def analyze_data():
         if uploaded_data is None:
             return jsonify({
                 'status': 'error',
-                'message': 'No data uploaded. Please upload a CSV file first.'
+                'message': 'No data uploaded. Please upload a CSV or Excel file first.'
             }), 400
 
         logger.info("Starting SIM swap detection analysis...")
 
-        # Initialize results
-        all_suspicious_activities = []
-        user_summaries = {}
+        user_results, suspicious_rows = build_user_feature_rows(uploaded_data)
 
-        # Group data by user_id for analysis
-        for user_id in uploaded_data['user_id'].unique():
-            user_data = uploaded_data[uploaded_data['user_id'] == user_id].copy()
-
-            # Analyze this user's behavior
-            user_suspicious = analyze_user_behavior(user_data)
-            all_suspicious_activities.extend(user_suspicious)
-
-            # Store user summary
-            user_summaries[user_id] = {
-                'total_records': len(user_data),
-                'suspicious_count': len(user_suspicious),
-                'risk_level': 'High' if any(act['risk_level'] == 'High' for act in user_suspicious) else
-                            'Medium' if any(act['risk_level'] == 'Medium' for act in user_suspicious) else 'Low'
-            }
-
-        # Calculate overall statistics
-        total_records = len(uploaded_data)
-        suspicious_count = len(all_suspicious_activities)
-        clean_count = total_records - suspicious_count
-
-        # Risk distribution
+        # Risk distribution based on alert levels
         risk_distribution = {'High': 0, 'Medium': 0, 'Low': 0}
-        for activity in all_suspicious_activities:
-            risk_distribution[activity['risk_level']] += 1
+        for res in user_results:
+            level = res['alert_level'].upper()
+            if level == 'HIGH':
+                risk_distribution['High'] += 1
+            elif level == 'MEDIUM':
+                risk_distribution['Medium'] += 1
+            else:
+                risk_distribution['Low'] += 1
 
-        # Store analysis results globally
+        total_records = len(uploaded_data)
+        suspicious_count = len([u for u in user_results if u['total_rules_triggered'] > 0])
+        clean_count = max(len(user_results) - suspicious_count, 0)
+
         analysis_results = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'total_records': total_records,
             'suspicious_count': suspicious_count,
             'clean_count': clean_count,
             'risk_distribution': risk_distribution,
-            'suspicious_activities': all_suspicious_activities,
-            'user_summaries': user_summaries,
+            'suspicious_activities': suspicious_rows,
+            'user_summaries': {res['user_id']: res for res in user_results},
             'analysis_summary': {
-                'users_analyzed': len(user_summaries),
-                'high_risk_users': sum(1 for u in user_summaries.values() if u['risk_level'] == 'High'),
-                'medium_risk_users': sum(1 for u in user_summaries.values() if u['risk_level'] == 'Medium'),
-                'clean_users': sum(1 for u in user_summaries.values() if u['risk_level'] == 'Low')
+                'users_analyzed': len(user_results),
+                'high_risk_users': risk_distribution['High'],
+                'medium_risk_users': risk_distribution['Medium'],
+                'clean_users': risk_distribution['Low']
             }
         }
 
-        logger.info(f"Analysis completed: {suspicious_count} suspicious activities found out of {total_records} records")
+        logger.info(f"Analysis completed: {suspicious_count} suspicious users out of {len(user_results)} analyzed")
 
         return jsonify({
             'status': 'success',
@@ -433,7 +567,7 @@ def analyze_data():
                 'total_records': total_records,
                 'suspicious_count': suspicious_count,
                 'clean_count': clean_count,
-                'users_analyzed': len(user_summaries)
+                'users_analyzed': len(user_results)
             }
         })
 
@@ -579,11 +713,12 @@ def generate_report():
         pdf.set_font('Arial', '', 10)
 
         summary_text = f"""
-This report presents the findings of SIM swap detection analysis performed on user activity logs.
-The analysis identified {analysis_results['suspicious_count']} suspicious activities out of
-{analysis_results['total_records']} total records processed.
+    This report summarizes the rule-based SIM swap detection performed on the uploaded activity logs.
+    The analysis flagged {analysis_results['suspicious_count']} suspicious users out of
+    {analysis_results['analysis_summary']['users_analyzed']} users analyzed
+    ({analysis_results['total_records']} total records processed).
 
-Risk Assessment: {'HIGH' if analysis_results['risk_distribution']['High'] > 5 else 'MEDIUM' if analysis_results['risk_distribution']['Medium'] > 3 else 'LOW'}
+    Overall Risk Assessment: {'HIGH' if analysis_results['risk_distribution']['High'] > 5 else 'MEDIUM' if analysis_results['risk_distribution']['Medium'] > 3 else 'LOW'}
         """
 
         pdf.multi_cell(0, 5, summary_text.strip())
@@ -773,81 +908,11 @@ def internal_error(error):
 
 @app.route('/predict', methods=['POST'])
 def predict_sim_swap():
-    """
-    ML Prediction endpoint for real-time SIM swap detection
-
-    Expected JSON input:
-    {
-        "distance_change": float,
-        "time_since_sim_change": float,
-        "num_failed_logins_last_24h": int,
-        "num_calls_last_24h": int,
-        "num_sms_last_24h": int,
-        "data_usage_change_percent": float,
-        "change_in_cell_tower_id": int,
-        "is_roaming": int (0 or 1),
-        "sim_change_flag": int (0 or 1),
-        "device_change_flag": int (0 or 1),
-        "current_city": str,
-        "previous_city": str
-    }
-
-    Returns:
-        JSON with prediction results
-    """
-    try:
-        # Check if model is loaded
-        if ml_predictor.model is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'ML model not loaded. Please ensure model files exist.',
-                'prediction': 0,
-                'confidence': 0.0,
-                'risk_factors': []
-            }), 503
-
-        # Get JSON data from request
-        data = request.get_json()
-
-        if not data:
-            return jsonify({
-                'status': 'error',
-                'message': 'No data provided'
-            }), 400
-
-        # Validate required fields
-        required_fields = [
-            'distance_change', 'time_since_sim_change', 'num_failed_logins_last_24h',
-            'num_calls_last_24h', 'num_sms_last_24h', 'data_usage_change_percent',
-            'change_in_cell_tower_id', 'is_roaming', 'sim_change_flag',
-            'device_change_flag'
-        ]
-
-        missing_fields = [field for field in required_fields if field not in data]
-        if missing_fields:
-            return jsonify({
-                'status': 'error',
-                'message': f'Missing required fields: {", ".join(missing_fields)}'
-            }), 400
-
-        # Make prediction
-        logger.info(f"Making prediction for data: {data}")
-        result = ml_predictor.predict(data)
-
-        # Log prediction result
-        logger.info(f"Prediction result: {result}")
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Error in prediction endpoint: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Prediction failed: {str(e)}',
-            'prediction': 0,
-            'confidence': 0.0,
-            'risk_factors': []
-        }), 500
+    """Disabled ML endpoint for final rule-based submission."""
+    return jsonify({
+        'status': 'error',
+        'message': 'ML endpoints are disabled for the final rule-based submission.'
+    }), 400
 
 # ============================================================================
 # SRI LANKAN ML ENDPOINTS
@@ -855,146 +920,35 @@ def predict_sim_swap():
 
 @app.route('/sl/upload-dataset', methods=['POST'])
 def sl_upload_dataset():
-    """
-    Upload Sri Lankan dataset (CSV or Excel)
-    Returns dataset preview and class distribution
-    """
-    try:
-        if 'file' not in request.files:
-            return jsonify({
-                'status': 'error',
-                'message': 'No file provided'
-            }), 400
-
-        file = request.files['file']
-
-        if file.filename == '':
-            return jsonify({
-                'status': 'error',
-                'message': 'No file selected'
-            }), 400
-
-        # Save file temporarily
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(filepath)
-
-        # Load dataset
-        if not sl_ml_handler.load_dataset(filepath):
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to load dataset'
-            }), 500
-
-        # Get dataset info
-        preview = sl_ml_handler.get_dataset_preview(10)
-        distribution = sl_ml_handler.get_class_distribution()
-        stats = sl_ml_handler.get_dataset_stats()
-
-        logger.info(f"✅ Sri Lankan dataset loaded: {stats['total_rows']} rows")
-
-        return jsonify({
-            'status': 'success',
-            'preview': preview,
-            'distribution': distribution,
-            'total_rows': stats['total_rows'],
-            'total_columns': stats['total_columns'],
-            'columns': stats['columns']
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Error uploading dataset: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+    """Disabled ML endpoint for final rule-based submission."""
+    return jsonify({
+        'status': 'error',
+        'message': 'Sri Lankan ML endpoints are disabled for the final rule-based submission.'
+    }), 400
 
 @app.route('/sl/train-model', methods=['POST'])
 def sl_train_model():
-    """
-    Train ML model on uploaded Sri Lankan dataset
-    """
-    try:
-        data = request.get_json()
-
-        model_type = data.get('model_type', 'xgboost')
-        test_size = data.get('test_size', 0.2)
-
-        logger.info(f"Training {model_type} model with test_size={test_size}")
-
-        # Train model
-        result = sl_ml_handler.train_model(
-            model_type=model_type,
-            test_size=test_size
-        )
-
-        if result['status'] == 'success':
-            logger.info(f"✅ Model trained successfully - F1: {result['metrics']['f1_score']:.4f}")
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Error training model: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+    """Disabled ML endpoint for final rule-based submission."""
+    return jsonify({
+        'status': 'error',
+        'message': 'Sri Lankan ML endpoints are disabled for the final rule-based submission.'
+    }), 400
 
 @app.route('/sl/predict', methods=['POST'])
 def sl_predict():
-    """
-    Make prediction using trained Sri Lankan model
-    """
-    try:
-        data = request.get_json()
-
-        if not data:
-            return jsonify({
-                'status': 'error',
-                'message': 'No data provided'
-            }), 400
-
-        # Make prediction
-        result = sl_ml_handler.predict(data)
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Error making prediction: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e),
-            'prediction': 0,
-            'confidence': 0.0
-        }), 500
+    """Disabled ML endpoint for final rule-based submission."""
+    return jsonify({
+        'status': 'error',
+        'message': 'Sri Lankan ML endpoints are disabled for the final rule-based submission.'
+    }), 400
 
 @app.route('/sl/download-model', methods=['GET'])
 def sl_download_model():
-    """
-    Download trained model file
-    """
-    try:
-        model_path = sl_ml_handler.model_path
-
-        if not os.path.exists(model_path):
-            return jsonify({
-                'status': 'error',
-                'message': 'Model file not found. Please train a model first.'
-            }), 404
-
-        return send_file(
-            model_path,
-            as_attachment=True,
-            download_name='sl_xgboost_model.pkl',
-            mimetype='application/octet-stream'
-        )
-
-    except Exception as e:
-        logger.error(f"Error downloading model: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+    """Disabled ML endpoint for final rule-based submission."""
+    return jsonify({
+        'status': 'error',
+        'message': 'Sri Lankan ML endpoints are disabled for the final rule-based submission.'
+    }), 400
 
 if __name__ == '__main__':
     # Create necessary directories
