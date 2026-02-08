@@ -1,0 +1,44 @@
+# =========================
+# Node / Angular
+# =========================
+node_modules/
+.angular/
+dist/
+.vite/
+*.log
+
+# Angular / TS build artifacts
+*.tsbuildinfo
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+
+# =========================
+# Python
+# =========================
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =========================
+# Backend generated data
+# =========================
+backend/uploads/
+backend/reports/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+.vscode/
+.idea/
+
+# =========================
+# Testing / Coverage
+# =========================
+coverage/

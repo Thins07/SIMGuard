@@ -1,0 +1,23 @@
+<div class="h-full flex flex-col bg-slate-950">
+  <app-header [currentView]="view()" (navigate)="setView($event)"></app-header>
+  
+  <main class="flex-1 overflow-auto relative">
+    @switch (view()) {
+      @case ('home') {
+        <app-hero (start)="setView('ml-manual')"></app-hero>
+      }
+      @case ('upload') {
+        <app-upload (analysisComplete)="setView('dashboard')"></app-upload>
+      }
+      @case ('dashboard') {
+        <app-dashboard></app-dashboard>
+      }
+      @case ('ml-manual') {
+        <app-ml-manual></app-ml-manual>
+      }
+      @case ('sl-training') {
+        <app-sl-training></app-sl-training>
+      }
+    }
+  </main>
+</div>
