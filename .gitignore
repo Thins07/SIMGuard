@@ -2,7 +2,6 @@
 # Node / Angular
 # =========================
 node_modules/
-.angular/
 dist/
 .vite/
 *.log
