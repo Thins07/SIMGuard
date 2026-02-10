@@ -303,7 +303,7 @@ def predict():
 
 @app.route('/upload_train', methods=['POST'])
 def upload_train():
-    """Upload dataset for ML training"""
+    """Upload dataset for ML training/diagnostics"""
     if 'file' not in request.files: return jsonify({'status': 'error'}), 400
     file = request.files['file']
     path = os.path.join(UPLOAD_FOLDER, 'training_data.csv') # Save as generic name
@@ -323,6 +323,21 @@ def upload_train():
         return jsonify({'status': 'success', 'stats': stats})
     except Exception as e:
          return jsonify({'status': 'error', 'message': str(e)}), 400
+
+@app.route('/diagnostics', methods=['POST'])
+def run_diagnostics():
+    """Run model evaluation/diagnostics on the uploaded dataset"""
+    try:
+        csv_path = os.path.join(UPLOAD_FOLDER, 'training_data.csv')
+        if os.path.exists(csv_path):
+             df = pd.read_csv(csv_path) if csv_path.endswith('.csv') else pd.read_excel(csv_path, engine='openpyxl')
+        else:
+             return jsonify({'status': 'error', 'message': 'No dataset uploaded'}), 400
+        
+        res = ml_engine.run_diagnostics(df)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/train', methods=['POST'])
 def train():
