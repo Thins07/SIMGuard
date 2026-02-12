@@ -361,10 +361,8 @@ This project is created for educational purposes as part of a final year cyberse
 
 ## 👨‍💻 Author
 
-**[Your Name]** - Final Year Cybersecurity Student
-- Email: [your.email@university.edu]
-- LinkedIn: [Your LinkedIn Profile]
-- University: [Your University Name]
+**[Thinara]** - Final Year Cybersecurity Student
+
 
 ## 🙏 Acknowledgments
 
@@ -373,14 +371,6 @@ This project is created for educational purposes as part of a final year cyberse
 - Chart.js for visualization
 - Font Awesome for icons
 - Academic supervisors and peers
-
-## 📞 Support
-
-For questions, issues, or academic inquiries:
-- Create an issue in this repository
-- Contact the author via email
-- Refer to the documentation
-
 ---
 
 **SIMGuard** - Protecting against SIM swapping attacks through intelligent detection and analysis.
@@ -389,3 +379,4 @@ For questions, issues, or academic inquiries:
 ![Flask](https://img.shields.io/badge/Flask-API-green?style=flat&logo=flask)
 ![JavaScript](https://img.shields.io/badge/Frontend-JavaScript-yellow?style=flat&logo=javascript)
 ![Cybersecurity](https://img.shields.io/badge/Domain-Cybersecurity-red?style=flat&logo=security)
+
