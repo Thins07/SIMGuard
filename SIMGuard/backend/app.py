@@ -281,20 +281,24 @@ def get_results():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """Manual prediction using the new Thinker Model"""
+    """Manual prediction using Thinker Model + rule-based risk (differentiates LOW/MEDIUM/HIGH by probability)."""
     try:
         data = request.json
         result = ml_engine.predict(data)
         
-        # Determine visual risk level
-        risk_level = 'LOW'
-        if result['prediction'] == 1:
-            risk_level = 'HIGH' if result['confidence'] > 0.8 else 'MEDIUM'
-            
+        # Risk level from probability bands (confidence is 0-1): HIGH >80%, MEDIUM 50-80%, LOW <50%
+        prob = float(result.get('confidence', 0))
+        if prob > 0.8:
+            risk_level = 'HIGH'
+        elif prob >= 0.5:
+            risk_level = 'MEDIUM'
+        else:
+            risk_level = 'LOW'
+
         return jsonify({
             'status': 'success',
             'prediction': int(result['prediction']),
-            'confidence': float(result['confidence']),
+            'confidence': prob,
             'risk_level': risk_level,
             'message': 'Potential SIM Swap Detected' if result['prediction'] == 1 else 'No Suspicious Activity'
         })

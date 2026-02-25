@@ -86,6 +86,7 @@ class RuleEngine:
                 })
         
         # Determine High/Medium/Low based on accumulated score
+        #you can adjust thresholds as needed
         alert_level = format_alert_level(risk_score)
         alert_emoji = format_alert_emoji(alert_level)
         
