@@ -107,95 +107,177 @@ def normalize_uploaded_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def build_user_feature_rows(df: pd.DataFrame) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Transform raw events into per-user feature rows for the rule engine."""
-    user_features = []
-    suspicious_rows = []
+    """
+    Transform raw input into per-user feature rows for the rule engine.
 
-    for user_id, group in df.groupby('user_id'):
-        group = group.sort_values('timestamp').reset_index(drop=True)
-        end_time = group['timestamp'].max()
-        
-        # Calculate heuristics
-        last_sim_id = None
-        last_device_id = None
-        last_location = None
-        last_sim_change_time = None
-        
-        previous_city = ''
-        current_city = ''
-        device_change_after_sim = False
-        hours_between_sim_device_change = 999
-        is_roaming = False
-        
-        # Count failed logins in last 24h
-        recent_failed = group[(group['login_status'] == 'failed') & 
-                             (group['timestamp'] >= end_time - timedelta(hours=24))]
-        failed_logins_24h = len(recent_failed)
+    Supports two schemas:
+    1) Legacy event logs (timestamp, sim_id, device_id, location, login_status, is_roaming)
+    2) New per-user batch CSV with features like:
+       user_id, phone_number, sim_swap_request_count_30d, days_since_last_sim_swap,
+       device_change_flag, location_change_flag, failed_otp_attempts_24h,
+       account_age_days, avg_monthly_call_duration, avg_monthly_data_usage_gb,
+       num_unique_contacts_30d, recent_password_change_flag, fraud_report_flag, sim_swap_label
+    """
+    user_features: List[Dict[str, Any]] = []
+    suspicious_rows: List[Dict[str, Any]] = []
 
-        for _, row in group.iterrows():
-            ts = row['timestamp']
-            
-            # SIM Change
-            if last_sim_id is not None and row['sim_id'] != last_sim_id:
-                last_sim_change_time = ts
-            
-            # Device Change post SIM
-            if last_sim_change_time and last_device_id is not None and row['device_id'] != last_device_id:
-                diff = hours_between(ts, last_sim_change_time)
-                if diff <= config.DEVICE_CHANGE_AFTER_SIM_HOURS:
-                    device_change_after_sim = True
-                    hours_between_sim_device_change = diff
-            
-            # Location
-            if last_location is not None and row['location'] != last_location:
-                previous_city = last_location
-                current_city = row['location']
-            
-            # Roaming Check
-            if 'is_roaming' in row:
-                val = str(row['is_roaming']).lower()
-                if val in ['true', '1', 'yes']:
-                    is_roaming = True
+    # Minimal set of columns that identify the new Sri Lankan per-user CSV schema
+    # (time-since-SIM-change, behavioural counters, distance, tower changes, labels, etc.)
+    new_schema_cols = {
+        'user_id',
+        'phone_number',
+        'time_since_last_sim_change',
+        'num_calls_last_24h',
+        'num_sms_last_24h',
+        'data_usage_last_24h',
+        'change_in_data_usage',
+        'login_attempts',
+        'num_failed_logins_last_24h',
+        'transaction_count',
+        'account_activity_flag',
+        'sim_change_flag',
+        'device_change_flag',
+        'is_roaming',
+        'distance_change_km',
+        'change_in_cell_tower_id',
+        'risk_score',
+        'label',
+        'is_sim_swap',
+        'alert_type',
+    }
 
-            last_sim_id = row['sim_id']
-            last_device_id = row['device_id']
-            last_location = row['location']
+    if new_schema_cols.issubset(set(df.columns)):
+        # New per-user CSV: each row already represents a user summary / snapshot.
+        for _, row in df.iterrows():
+            feature_row = {
+                'user_id': row.get('user_id'),
+                'time_since_last_sim_change': row.get('time_since_last_sim_change', 0),
+                'num_calls_last_24h': row.get('num_calls_last_24h', 0),
+                'num_sms_last_24h': row.get('num_sms_last_24h', 0),
+                'data_usage_last_24h': row.get('data_usage_last_24h', 0.0),
+                'change_in_data_usage': row.get('change_in_data_usage', 0.0),
+                'login_attempts': row.get('login_attempts', 0),
+                'num_failed_logins_last_24h': row.get('num_failed_logins_last_24h', 0),
+                'transaction_count': row.get('transaction_count', 0),
+                'account_activity_flag': row.get('account_activity_flag', 0),
+                'sim_change_flag': row.get('sim_change_flag', 0),
+                'device_change_flag': row.get('device_change_flag', 0),
+                'is_roaming': row.get('is_roaming', 0),
+                'distance_change_km': row.get('distance_change_km', 0.0),
+                'change_in_cell_tower_id': row.get('change_in_cell_tower_id', 0),
+            }
 
-        hours_since_sim_change = hours_between(end_time, last_sim_change_time) if last_sim_change_time else 999
-        
-        feature_row = {
-            'user_id': user_id,
-            'hours_since_sim_change': hours_since_sim_change,
-            'device_changed_after_sim': device_change_after_sim,
-            'hours_between_sim_device_change': hours_between_sim_device_change,
-            'previous_city': previous_city or last_location or '',
-            'current_city': current_city or last_location or '',
-            'failed_logins_24h': failed_logins_24h,
-            'is_roaming': is_roaming
-        }
-        
-        # Run Rule Engine
-        rule_result = rule_engine.evaluate_user(feature_row)
-        
-        user_features.append({
-            'user_id': user_id,
-            'risk_score': rule_result['risk_score'],
-            'alert_level': rule_result['alert_level'],
-            'alert_emoji': rule_result['alert_emoji'],
-            'triggered_rules': rule_result['triggered_rules'],
-            'total_rules_triggered': rule_result['total_rules_triggered']
-        })
-        
-        if rule_result['triggered_rules']:
-             reasons = '; '.join(r['reason'] for r in rule_result['triggered_rules'])
-             suspicious_rows.append({
-                 'timestamp': end_time.strftime('%Y-%m-%d %H:%M:%S'),
-                 'user_id': user_id,
-                 'sim_id': last_sim_id,
-                 'risk_level': rule_result['alert_level'],
-                 'flag_reason': reasons
-             })
-             
+            rule_result = rule_engine.evaluate_user(feature_row)
+
+            user_features.append({
+                'user_id': feature_row['user_id'],
+                'risk_score': rule_result['risk_score'],
+                'alert_level': rule_result['alert_level'],
+                'alert_emoji': rule_result['alert_emoji'],
+                'triggered_rules': rule_result['triggered_rules'],
+                'total_rules_triggered': rule_result['total_rules_triggered'],
+            })
+
+            if rule_result['triggered_rules']:
+                reasons = '; '.join(r['reason'] for r in rule_result['triggered_rules'])
+                suspicious_rows.append({
+                    'timestamp': str(row.get('timestamp', 'N/A')),
+                    'user_id': feature_row['user_id'],
+                    'sim_id': row.get('phone_number', ''),
+                    'risk_level': rule_result['alert_level'],
+                    'flag_reason': reasons,
+                })
+    else:
+        # Legacy log-based schema.
+        for user_id, group in df.groupby('user_id'):
+            group = group.sort_values('timestamp').reset_index(drop=True)
+            end_time = group['timestamp'].max()
+
+            # Calculate heuristics
+            last_sim_id = None
+            last_device_id = None
+            last_location = None
+            last_sim_change_time = None
+
+            previous_city = ''
+            current_city = ''
+            device_change_after_sim = False
+            hours_between_sim_device_change = 999
+            is_roaming = False
+
+            # Count failed logins in last 24h
+            recent_failed = group[
+                (group['login_status'] == 'failed')
+                & (group['timestamp'] >= end_time - timedelta(hours=24))
+            ]
+            failed_logins_24h = len(recent_failed)
+
+            for _, row in group.iterrows():
+                ts = row['timestamp']
+
+                # SIM Change
+                if last_sim_id is not None and row['sim_id'] != last_sim_id:
+                    last_sim_change_time = ts
+
+                # Device Change post SIM
+                if last_sim_change_time and last_device_id is not None and row['device_id'] != last_device_id:
+                    diff = hours_between(ts, last_sim_change_time)
+                    if diff <= config.DEVICE_CHANGE_AFTER_SIM_HOURS:
+                        device_change_after_sim = True
+                        hours_between_sim_device_change = diff
+
+                # Location
+                if last_location is not None and row['location'] != last_location:
+                    previous_city = last_location
+                    current_city = row['location']
+
+                # Roaming Check
+                if 'is_roaming' in row:
+                    val = str(row['is_roaming']).lower()
+                    if val in ['true', '1', 'yes']:
+                        is_roaming = True
+
+                last_sim_id = row['sim_id']
+                last_device_id = row['device_id']
+                last_location = row['location']
+
+            hours_since_sim_change = (
+                hours_between(end_time, last_sim_change_time) if last_sim_change_time else 999
+            )
+
+            feature_row = {
+                'user_id': user_id,
+                'hours_since_sim_change': hours_since_sim_change,
+                'device_changed_after_sim': device_change_after_sim,
+                'hours_between_sim_device_change': hours_between_sim_device_change,
+                'previous_city': previous_city or last_location or '',
+                'current_city': current_city or last_location or '',
+                'failed_logins_24h': failed_logins_24h,
+                'is_roaming': is_roaming,
+            }
+
+            # Run Rule Engine
+            rule_result = rule_engine.evaluate_user(feature_row)
+
+            user_features.append({
+                'user_id': user_id,
+                'risk_score': rule_result['risk_score'],
+                'alert_level': rule_result['alert_level'],
+                'alert_emoji': rule_result['alert_emoji'],
+                'triggered_rules': rule_result['triggered_rules'],
+                'total_rules_triggered': rule_result['total_rules_triggered'],
+            })
+
+            if rule_result['triggered_rules']:
+                reasons = '; '.join(r['reason'] for r in rule_result['triggered_rules'])
+                suspicious_rows.append({
+                    'timestamp': end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'user_id': user_id,
+                    'sim_id': last_sim_id,
+                    'risk_level': rule_result['alert_level'],
+                    'flag_reason': reasons,
+                })
+
     return user_features, suspicious_rows
 
 @app.route('/', methods=['GET'])
@@ -218,17 +300,22 @@ def upload_file():
             df = load_uploaded_dataframe(filepath)
             df = normalize_uploaded_dataframe(df)
             uploaded_data = df
-            
-            return jsonify({
-                'status': 'success', 
+
+            response: Dict[str, Any] = {
+                'status': 'success',
                 'filename': filename,
                 'records_count': len(df),
                 'columns': list(df.columns),
-                'date_range': {
+            }
+
+            # Legacy log-based datasets have a timestamp column; new per-user CSVs don't.
+            if 'timestamp' in df.columns:
+                response['date_range'] = {
                     'start': df['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S'),
-                    'end': df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
+                    'end': df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S'),
                 }
-            })
+
+            return jsonify(response)
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 400
     except Exception as e:
@@ -241,11 +328,60 @@ def analyze_data():
     
     try:
         user_results, suspicious_rows = build_user_feature_rows(uploaded_data)
-        
+
         high = len([u for u in user_results if u['alert_level'] == 'HIGH'])
         medium = len([u for u in user_results if u['alert_level'] == 'MEDIUM'])
         low = len(user_results) - high - medium
-        
+
+        # Optional: richer stats for new per-user CSV schema
+        feature_stats: Dict[str, Any] = {}
+        new_csv_cols = {
+            'time_since_last_sim_change',
+            'sim_change_flag',
+            'device_change_flag',
+            'num_calls_last_24h',
+            'num_sms_last_24h',
+            'data_usage_last_24h',
+            'change_in_data_usage',
+            'num_failed_logins_last_24h',
+            'transaction_count',
+            'account_activity_flag',
+            'is_roaming',
+            'distance_change_km',
+            'change_in_cell_tower_id',
+            'is_sim_swap',
+            'alert_type',
+        }
+
+        if new_csv_cols.issubset(set(uploaded_data.columns)):
+            df = uploaded_data
+            feature_stats = {
+                'avg_time_since_last_sim_change_h': float(df['time_since_last_sim_change'].mean()),
+                'recent_sim_change_users': int(
+                    (df['time_since_last_sim_change'] <= config.SIM_CHANGE_HOURS_THRESHOLD).sum()
+                ),
+                'users_with_sim_change_flag': int((df['sim_change_flag'] == 1).sum()),
+                'users_with_device_change_flag': int((df['device_change_flag'] == 1).sum()),
+                'avg_calls_last_24h': float(df['num_calls_last_24h'].mean()),
+                'avg_sms_last_24h': float(df['num_sms_last_24h'].mean()),
+                'avg_data_usage_last_24h': float(df['data_usage_last_24h'].mean()),
+                'avg_change_in_data_usage': float(df['change_in_data_usage'].mean()),
+                'high_failed_login_users': int(
+                    (df['num_failed_logins_last_24h'] >= config.FAILED_LOGIN_COUNT_THRESHOLD).sum()
+                ),
+                'avg_transaction_count': float(df['transaction_count'].mean()),
+                'high_activity_flag_users': int((df['account_activity_flag'] == 1).sum()),
+                'roaming_users': int((df['is_roaming'] == 1).sum()),
+                'avg_distance_change_km': float(df['distance_change_km'].mean()),
+                'high_distance_users': int(
+                    (df['distance_change_km'] >= config.LOCATION_DISTANCE_KM_THRESHOLD).sum()
+                ),
+                'high_cell_tower_change_users': int(
+                    (df['change_in_cell_tower_id'] >= config.CELL_TOWER_CHANGE_COUNT_THRESHOLD).sum()
+                ),
+                'sim_swap_labelled_users': int((df['is_sim_swap'] == 1).sum()),
+            }
+
         analysis_results = {
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'summary': {
@@ -255,11 +391,12 @@ def analyze_data():
                 'users_analyzed': len(user_results),
                 'high_risk_users': high,
                 'medium_risk_users': medium,
-                'clean_users': low
+                'clean_users': low,
             },
             'risk_distribution': {'High': high, 'Medium': medium, 'Low': low},
             'suspicious_activities': suspicious_rows,
-            'total_suspicious_activities': len(suspicious_rows)
+            'total_suspicious_activities': len(suspicious_rows),
+            'feature_stats': feature_stats,
         }
         return jsonify({'status': 'success', 'summary': analysis_results['summary']})
     except Exception as e:
@@ -274,7 +411,10 @@ def get_results():
         'summary': analysis_results['summary'],
         'risk_distribution': analysis_results['risk_distribution'],
         'suspicious_activities': analysis_results['suspicious_activities'],
-        'total_suspicious_activities': analysis_results['total_suspicious_activities']
+        'total_suspicious_activities': analysis_results['total_suspicious_activities'],
+        # Expose feature-level statistics (when available) so the frontend and PDF
+        # report can provide a richer narrative about the dataset.
+        'feature_stats': analysis_results.get('feature_stats', {})
     })
 
 # --- ML ENDPOINTS (INTEGRATED) ---
@@ -383,7 +523,42 @@ def generate_report():
     pdf.add_page()
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 10, f"Analysis Time: {analysis_results['timestamp']}", 0, 1)
-    pdf.cell(0, 10, f"Suspicious Users: {analysis_results['summary']['suspicious_count']}", 0, 1)
+    summary = analysis_results.get('summary', {})
+    pdf.cell(0, 10, f"Total Records: {summary.get('total_records', 'N/A')}", 0, 1)
+    pdf.cell(0, 10, f"Users Analyzed: {summary.get('users_analyzed', 'N/A')}", 0, 1)
+    pdf.cell(0, 10, f"Suspicious Users (High + Medium): {summary.get('suspicious_count', 'N/A')}", 0, 1)
+    pdf.cell(0, 10, f"High Risk Users: {summary.get('high_risk_users', 'N/A')}", 0, 1)
+    pdf.cell(0, 10, f"Medium Risk Users: {summary.get('medium_risk_users', 'N/A')}", 0, 1)
+    pdf.cell(0, 10, f"Low Risk Users: {summary.get('clean_users', 'N/A')}", 0, 1)
+
+    # If feature-level statistics are available (new CSV schema), include a short narrative
+    feature_stats: Dict[str, Any] = analysis_results.get('feature_stats', {})
+    if feature_stats:
+        pdf.ln(5)
+        pdf.set_font('Arial', 'B', 12)
+        pdf.cell(0, 10, 'Behavioural Summary', 0, 1)
+        pdf.set_font('Arial', '', 12)
+
+        def write_stat(label: str, key: str):
+            if key in feature_stats:
+                pdf.cell(0, 8, f"{label}: {feature_stats[key]}", 0, 1)
+
+        write_stat("Average time since last SIM change (hours)", 'avg_time_since_last_sim_change_h')
+        write_stat("Users with recent SIM change", 'recent_sim_change_users')
+        write_stat("Users with SIM change flag", 'users_with_sim_change_flag')
+        write_stat("Users with device change flag", 'users_with_device_change_flag')
+        write_stat("Average calls in last 24h", 'avg_calls_last_24h')
+        write_stat("Average SMS in last 24h", 'avg_sms_last_24h')
+        write_stat("Average data usage in last 24h", 'avg_data_usage_last_24h')
+        write_stat("Average change in data usage", 'avg_change_in_data_usage')
+        write_stat("Users with high failed logins", 'high_failed_login_users')
+        write_stat("Average transaction count", 'avg_transaction_count')
+        write_stat("Users with high account activity flag", 'high_activity_flag_users')
+        write_stat("Users currently roaming", 'roaming_users')
+        write_stat("Average distance change (km)", 'avg_distance_change_km')
+        write_stat("Users with large distance jumps", 'high_distance_users')
+        write_stat("Users with large cell tower changes", 'high_cell_tower_change_users')
+        write_stat("Users labelled as SIM swap in dataset", 'sim_swap_labelled_users')
     
     pdf_output = io.BytesIO()
     pdf_string = pdf.output(dest='S').encode('latin-1')
