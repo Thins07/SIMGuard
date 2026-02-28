@@ -232,9 +232,23 @@ class ThinkerModel:
             X_scaled = self.scaler.transform(X)
             ml_prob = float(self.model.predict_proba(X_scaled)[0][1])
 
-            # Blend rule-based and ML: 60% rule / 40% ML so manual inputs (incl. flags, failed logins) matter
-            final_prob = 0.6 * rule_prob + 0.4 * ml_prob
-            pred = int(final_prob > 0.5)
+            # Adaptive calibration:
+            # - Strong manual high-risk signals should stay HIGH (> 0.8)
+            # - Medium-risk rule signals should stay in MEDIUM band (0.5 to 0.8)
+            # - Clear low-risk rule signals should stay LOW (< 0.5)
+            #
+            # This avoids extreme manual attack patterns being dragged down by ML
+            # probabilities that are computed from only the 5 core features.
+            if rule_prob >= 0.8:
+                final_prob = max(0.85, 0.7 * rule_prob + 0.3 * ml_prob)
+            elif rule_prob >= 0.5:
+                blended = 0.65 * rule_prob + 0.35 * ml_prob
+                final_prob = min(0.79, max(0.5, blended))
+            else:
+                blended = 0.75 * rule_prob + 0.25 * ml_prob
+                final_prob = min(0.49, blended)
+
+            pred = int(final_prob >= 0.5)
 
             return {
                 'status': 'success',
