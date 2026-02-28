@@ -23,7 +23,7 @@ import { ViewState } from './types';
     <app-header [currentView]="view()" (navigate)="setView($event)"></app-header>
     <main class="min-h-[calc(100vh-64px)] bg-slate-950 text-slate-200">
       @switch (view()) {
-        @case ('home') { <app-hero (start)="setView('ml-manual')" class="block h-[calc(100vh-64px)]" /> }
+        @case ('home') { <app-hero (start)="setView('ml-manual')" class="block min-h-[calc(100vh-64px)]" /> }
         @case ('upload') { <app-upload (analysisComplete)="setView('dashboard')" /> }
         @case ('dashboard') { <app-dashboard /> }
         @case ('ml-manual') { <app-ml-manual /> }
